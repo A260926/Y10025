@@ -1,3 +1,31 @@
+### Unreleased — analysis & trace artifacts (no library code change)
+
+This entry records the call-chain analysis work, not a published release: no file under `src/` changed, so there is no version, tag, or observable behavior change.
+
+**Structure choice**
+- Added `ANALYSIS.md` as the primary artifact: it separates the pipeline into three independently testable layers — input validity (`RgbaColor | null` per parser), color-space mapping (clamp on the way into the unrounded RGBA model), and string formatting (per-model rounding on the way out).
+- Evidence lives in two focused suites, runnable one case at a time with `npx jest … -t`:
+  - `tests/trace-pipeline.test.ts` — canonical plugin order; walks priority, clamp/round, internal alpha, prototype updates, and asserts public results against the intermediate `rgba` model.
+  - `tests/trace-plugin-order.test.ts` — every test runs in `jest.isolateModules` so load-order and "not loaded yet" claims have a genuinely fresh parser registry/prototype.
+- Added `scripts/trace-pipeline.ts`, a standalone trace that prints the boundary table and exits non-zero with the precise step label and offending value if any documented conclusion breaks.
+
+**Coverage that was missing before**
+- No existing test asserted the *order* of `parsers.string`/`parsers.object`, or that an object accepted by several parsers is resolved purely by registration position (the rgb > hsl > hsv > … chain).
+- Internal-vs-public precision was only covered indirectly: nothing pinned `127.5` surviving in `rgba` for percentage rgb, or a fractional alpha surviving until an output method runs.
+- Parse-time alpha quantization for hex (`#fff4` → 0.27) had no contrast with the verbatim alpha path of the functional strings.
+- Plugin load order was exercised per plugin, but the lab/lch ambiguous-object flip and "re-extend never reorders" had no test.
+- Prototype visibility to instances created before `extend()` was not asserted.
+
+**Most dangerous counterexamples (and the cases that pin them)**
+- `{l:50,c:10,h:0,a:1,b:0}` resolves to `lab` (`#797677`) or `lch` (`#887177`) depending solely on which plugin was extended first — paired cases "lab beats lch" (`trace-pipeline.test.ts`) and "lch was loaded first" (`trace-plugin-order.test.ts`).
+- `rgba(0,0,0,0.9996)` keeps `rgba.a === 0.9996` but formats as opaque — case "omits alpha … when the ROUNDED alpha is 1".
+- `#fffff` passes the hex character regex yet is rejected by the length dispatcher — case "5-digit hex passes the broad character matcher".
+- A `push`ed parser cannot shadow built-ins, but an `unshift`ed one hijacks even `#fff` — the two position cases in `trace-plugin-order.test.ts`.
+
+**Public behavior deliberately preserved**
+- No source changes: parse priority, NaN/out-of-range clamping, silent black fallback, and all string formats are unchanged; the existing 102 tests pass untouched with no weakened assertions and no snapshots.
+- Probe parsers use one-off sentinel inputs and isolated module scopes; no network, randomness, sleeps, machine paths, or fixture-name special-casing.
+
 ### 2.10.0
 
 - Improve `mix` plugin by adding an optional `"rgb"` interpolation mode to `mix`, `tints`, `tones` and `shades`
